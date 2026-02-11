@@ -1,0 +1,106 @@
+########################################
+# ENV FILES (VERY IMPORTANT)
+########################################
+.env
+.env.*
+*.env
+.env.local
+.env.development
+.env.production
+
+########################################
+# NODE.JS
+########################################
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+yarn.lock
+pnpm-lock.yaml
+
+# Build folders
+dist/
+build/
+.next/
+out/
+coverage/
+
+########################################
+# PYTHON
+########################################
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.python-version
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+.eggs/
+*.egg-info/
+.installed.cfg
+*.egg
+pip-wheel-metadata/
+
+# Test / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+pytest_cache/
+
+########################################
+# LOG FILES
+########################################
+*.log
+logs/
+
+########################################
+# IDE / EDITOR
+########################################
+.vscode/
+.idea/
+*.swp
+*.swo
+
+########################################
+# OS FILES
+########################################
+.DS_Store
+Thumbs.db
+
+########################################
+# DOCKER
+########################################
+docker-compose.override.yml
+*.pid
+
+########################################
+# TEMP FILES
+########################################
+tmp/
+temp/
+
+########################################
+# DATABASE FILES (if local)
+########################################
+*.sqlite3
+*.db
+
+########################################
+# AWS / CREDENTIAL FILES
+########################################
+.aws/
+.aws/credentials

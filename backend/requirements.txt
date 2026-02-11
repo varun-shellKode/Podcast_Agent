@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+boto3
+botocore
+amazon-transcribe
+pydantic
+python-dotenv
+strands
+bedrock-agentcore
+websockets
+aiohttp
