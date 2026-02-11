@@ -104,11 +104,13 @@ async def start_podcast(topic: str, max_turns: int = 20):
 
 @app.get("/podcast/info")
 async def podcast_info():
-    """Get information about available speakers"""
-    from speaker_personas import SPEAKER_PERSONAS
+    """Get information about available role templates and active participants"""
+    from speaker_personas import ROLE_TEMPLATES, get_all_participants
     return {
-        "speakers": SPEAKER_PERSONAS,
-        "total_speakers": len(SPEAKER_PERSONAS)
+        "role_templates": ROLE_TEMPLATES,
+        "active_participants": get_all_participants(),
+        "total_roles": len(ROLE_TEMPLATES),
+        "total_participants": len(get_all_participants())
     }
 
 @app.get("/tts/info")

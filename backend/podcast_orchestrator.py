@@ -10,7 +10,16 @@ from enum import Enum
 from strands.models import BedrockModel
 from strands import Agent
 
-from speaker_personas import SPEAKER_PERSONAS, get_persona, get_speaker_name, set_speaker_name
+from speaker_personas import (
+    get_persona,
+    get_speaker_name,
+    set_speaker_name,
+    get_all_participants,
+    add_participant,
+    detect_role_from_introduction,
+    increment_turn_count,
+    reset_participants
+)
 from response_evaluator import ResponseEvaluator
 from question_generator import QuestionGenerator
 from speaker_selector import SpeakerSelector
@@ -23,6 +32,7 @@ class PodcastState(Enum):
     INTRO = "intro"
     QUESTIONING = "questioning"
     LISTENING = "listening"
+    INTRO_WAITING = "intro_waiting"
     EVALUATING = "evaluating"
     INTERRUPTING = "interrupting"
     WRAPPING_UP = "wrapping_up"
@@ -58,11 +68,9 @@ class PodcastOrchestrator:
         self.awaiting_response = False
         self.conversation_history: List[Dict] = []
         self.is_active = True  # Flag to track if the session is still active
-        self.consecutive_ai_turns = 0
 
-        # Speaker tracking
-        self.speaker_turn_counts = {sid: 0 for sid in SPEAKER_PERSONAS.keys()}
-        self.speaker_last_asked = {sid: None for sid in SPEAKER_PERSONAS.keys()}
+        # Reset participants for this session
+        reset_participants()
 
         # Components
         self.evaluator = ResponseEvaluator(model)
@@ -86,29 +94,32 @@ class PodcastOrchestrator:
             f"🎙️  Podcast Orchestrator initialized\n"
             f"   Topic: {topic}\n"
             f"   Max turns: {max_turns}\n"
-            f"   Speakers: {len(SPEAKER_PERSONAS)}"
+            f"   Mode: Dynamic participants"
         )
 
     def _build_orchestrator_prompt(self) -> str:
         return f"""You are the AI orchestrator for a technical podcast on the topic: "{self.topic}"
 
 ROLE:
-You are an intelligent moderator controlling a 5-speaker podcast:
-- Speaker 0: Host
-- Speaker 1: AWS Expert
-- Speaker 2: ShellKode Developer
-- Speaker 3: Tech Generalist
-- Speaker 4: Client
+You are an intelligent moderator for a dynamic podcast where participants join and introduce themselves.
 
-Note: Speakers will introduce themselves by name. Address them by their role initially, then use their actual names once introduced.
+Participants may have various roles:
+- Host (you may act as this)
+- AWS Expert
+- Developer
+- Tech Expert
+- Business stakeholder
+- General participant
 
 RESPONSIBILITIES:
-1. Generate contextual questions tailored to each speaker's expertise
-2. Listen to responses and evaluate relevance
-3. Politely interrupt if speakers go off-track
-4. Keep conversation flowing and engaging
-5. Ensure all speakers contribute meaningfully
-6. Cover the topic comprehensively
+1. Welcome participants as they introduce themselves
+2. Identify their expertise based on their introduction
+3. Generate contextual questions tailored to each participant's expertise
+4. Listen to responses and evaluate relevance
+5. Politely redirect if speakers go off-track
+6. Keep conversation flowing and engaging
+7. Ensure all participants contribute meaningfully
+8. Cover the topic comprehensively
 
 BEHAVIOR:
 - Be professional yet conversational
@@ -116,7 +127,8 @@ BEHAVIOR:
 - Redirect diplomatically when needed
 - Acknowledge good points before moving on
 - Keep the energy and pace appropriate
-- When asking first question to a speaker, encourage them to introduce themselves
+- When a new participant introduces themselves, note their name and expertise
+- Address participants by their actual names
 """
 
     async def start_podcast(self):
@@ -139,27 +151,32 @@ BEHAVIOR:
         # Add to history
         self._add_to_history("orchestrator", "Orchestrator", intro)
 
-        # Start with host (speaker 0)
-        self.state = PodcastState.QUESTIONING
-        await self._ask_next_question()
+        # Transition to waiting for introductions
+        logger.info("⏳ Waiting for human participant introductions...")
+        self.state = PodcastState.INTRO_WAITING
+        self.awaiting_response = True
+        self.current_speaker_id = None # Accept any speaker initially
 
     async def _generate_introduction(self) -> str:
         """Generate podcast introduction"""
-        prompt = f"""Generate a brief, engaging podcast introduction.
+        prompt = f"""Generate a brief, engaging podcast introduction and invite participants to introduce themselves.
 
 TOPIC: {self.topic}
 
-Generate a concise, professional introduction (1-2 sentences maximum) that:
-1. Welcomes listeners and introduces the topic
+Instructions:
+1. Welcome everyone to the podcast and state the topic clearly.
+2. Invite participants to introduce themselves (name and background).
+3. Keep it to 2-3 sentences max.
+4. Be warm and inviting.
 
-Keep it short and punchy. Return ONLY the introduction, no preamble."""
+Return ONLY the introduction, no preamble."""
 
         try:
             intro = str(self.agent(prompt)).strip()
             return intro
         except Exception as e:
             logger.error(f"❌ Introduction generation failed: {e}")
-            return f"Welcome to our podcast on {self.topic}. Today we have experts from different backgrounds discussing this topic in depth. Let's dive in!"
+            return f"Welcome to our podcast on {self.topic}. I'm excited to have everyone here today. Please introduce yourselves - your name and a bit about your background!"
 
     async def _ask_next_question(self):
         """Generate and ask the next question"""
@@ -177,7 +194,7 @@ Keep it short and punchy. Return ONLY the introduction, no preamble."""
         persona = get_persona(next_speaker_id)
 
         # Check if this is the speaker's first turn (for introduction prompt)
-        is_first_turn = self.speaker_turn_counts[next_speaker_id] == 0
+        is_first_turn = persona.get("turn_count", 0) == 0
 
         # Generate question
         question = await self.question_generator.generate_question(
@@ -192,21 +209,10 @@ Keep it short and punchy. Return ONLY the introduction, no preamble."""
         # Update state
         self.current_speaker_id = next_speaker_id
         self.current_question = question
-        
-        # If this is an AI speaker, we don't wait for audio; we generate the response
-        if persona.get("is_ai", False):
-            self.consecutive_ai_turns += 1
-            logger.info(f"🤖 Speaker {next_speaker_id} is AI (Turn {self.consecutive_ai_turns}) - generating response...")
-            self.awaiting_response = False
-            self.state = PodcastState.LISTENING
-            # Use gather or create_task to not block the WebSocket loop too long
-            asyncio.create_task(self._handle_ai_speaker_turn(next_speaker_id, question))
-        else:
-            self.consecutive_ai_turns = 0
-            self.awaiting_response = True
-            self.state = PodcastState.LISTENING
+        self.awaiting_response = True
+        self.state = PodcastState.LISTENING
 
-        # Get display name (role if name not known yet)
+        # Get display name
         display_name = get_speaker_name(next_speaker_id)
 
         # Send question to UI
@@ -225,8 +231,7 @@ Keep it short and punchy. Return ONLY the introduction, no preamble."""
         self._add_to_history("orchestrator", "Orchestrator", f"[To {display_name}] {question}")
 
         self.turn_count += 1
-        self.speaker_turn_counts[next_speaker_id] += 1
-        self.speaker_last_asked[next_speaker_id] = self.turn_count
+        increment_turn_count(next_speaker_id, self.turn_count)
 
         logger.info(
             f"❓ Turn {self.turn_count}: Asked {display_name} ({persona['role']})\n"
@@ -237,74 +242,29 @@ Keep it short and punchy. Return ONLY the introduction, no preamble."""
         """
         Select next speaker to ask using the SpeakerSelector agent
         """
-        # Force host every 3rd turn if AI has been dominating
-        if self.consecutive_ai_turns >= 2:
-            logger.info("✋ AI turn limit reached - forcing Host/User participation.")
-            return "0"
+        # Get all active participants
+        participants = get_all_participants()
+
+        if not participants:
+            logger.warning("⚠️ No active participants to select from")
+            return None
+
+        # Build turn counts from participants
+        turn_counts = {pid: p["turn_count"] for pid, p in participants.items()}
+        last_asked = {pid: p["last_turn"] for pid, p in participants.items()}
 
         # Get decision from speaker selector
         next_speaker_id = await self.speaker_selector.select_next_speaker(
             topic=self.topic,
             history=self.conversation_history,
-            personas=SPEAKER_PERSONAS,
-            turn_counts=self.speaker_turn_counts,
-            last_asked=self.speaker_last_asked,
-            consecutive_ai_turns=self.consecutive_ai_turns
+            personas=participants,
+            turn_counts=turn_counts,
+            last_asked=last_asked,
+            consecutive_ai_turns=0  # No AI turns anymore
         )
-        
+
         return next_speaker_id
 
-    async def _handle_ai_speaker_turn(self, speaker_id: str, question: str):
-        """Generate and process a response from an AI guest"""
-        if not self.is_active:
-            return
-
-        persona = get_persona(speaker_id)
-        
-        # Build prompt for the guest agent
-        prompt = f"""You are {persona['name']}, a {persona['role']} participating in a podcast about "{self.topic}".
-        
-EXPERTISE: {", ".join(persona.get('expertise', []))}
-TRAITS: {", ".join(persona.get('traits', []))}
-
-RECENT CONVERSATION:
-{self.question_generator._format_conversation_history(self.conversation_history, last_n=3)}
-
-THE HOST ASKED YOU: "{question}"
-
-Instructions:
-1. Provide a substantive, expert response as your persona.
-2. Be conversational but stay on topic.
-3. Keep it to 3-4 sentences.
-4. Don't use preamble like "Certainly" or "As an AWS expert". Just speak.
-
-Your response:"""
-
-        try:
-            # Pacing: wait for the question's TTS to finish (roughly)
-            # In a more advanced system, we'd wait for a "tts_ended" signal for the question
-            # For now, let's wait a bit longer to simulate natural flow
-            await asyncio.sleep(8)
-            
-            if not self.is_active:
-                return
-
-            # Use orchestrator agent to generate response (re-sharing the model)
-            response_text = str(self.agent(prompt)).strip()
-            
-            if not self.is_active:
-                return
-
-            logger.info(f"✅ AI Guest {speaker_id} ({persona['name']}) responded: {response_text[:50]}...")
-            
-            # Process this as a normal response
-            await self.handle_speaker_response(speaker_id, response_text)
-            
-        except Exception as e:
-            logger.error(f"❌ AI Guest response failed: {e}")
-            if self.is_active:
-                self.awaiting_response = False
-                await self._ask_next_question()
 
     async def handle_speaker_response(self, speaker_id: str, response_text: str):
         """
@@ -316,7 +276,7 @@ Your response:"""
         # Reset awaiting state immediately so it can be set again by redirects/interrupts
         self.awaiting_response = False
 
-        if speaker_id != self.current_speaker_id:
+        if speaker_id != self.current_speaker_id and self.state != PodcastState.INTRO_WAITING:
             logger.warning(
                 f"⚠️  Expected response from {self.current_speaker_id}, "
                 f"got response from {speaker_id}"
@@ -329,16 +289,58 @@ Your response:"""
 
         logger.info(f"👂 Received response from {speaker_name}: {response_text[:100]}...")
 
-        # Try to extract name from first response if not yet known
-        if persona.get("name") is None and self.speaker_turn_counts[speaker_id] == 1:
-            extracted_name = self._extract_name_from_introduction(response_text)
-            if extracted_name:
-                set_speaker_name(speaker_id, extracted_name)
-                speaker_name = extracted_name
-                logger.info(f"✅ Learned speaker name: {speaker_id} = {extracted_name}")
-
         # Add to history
         self._add_to_history(speaker_id, speaker_name, response_text)
+
+        # Special handling for Introduction phase
+        if self.state == PodcastState.INTRO_WAITING:
+            logger.info(f"✨ Intro phase: received introduction from speaker {speaker_id}")
+
+            # Check if this is a new participant
+            participant = get_persona(speaker_id)
+            if not participant or participant.get("name", "").startswith("Unknown"):
+                # New participant - extract name and role
+                extracted_name = self._extract_name_from_introduction(response_text)
+                detected_role = detect_role_from_introduction(response_text)
+
+                if not extracted_name:
+                    extracted_name = f"Participant {speaker_id}"
+
+                # Add them to the active participants
+                actual_speaker_id = add_participant(
+                    name=extracted_name,
+                    role=detected_role,
+                    voice_id="default"
+                )
+
+                # Update the speaker_id reference if needed
+                speaker_id = actual_speaker_id
+                speaker_name = extracted_name
+
+                logger.info(f"✅ Registered new participant: {extracted_name} as {detected_role}")
+
+                # Send notification to UI
+                if self.send_message_callback:
+                    await self.send_message_callback({
+                        "type": "participant_registered",
+                        "speaker_id": speaker_id,
+                        "speaker_name": extracted_name,
+                        "speaker_role": detected_role,
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+
+            # Check for "start" intent
+            start_keywords = ["start", "begin", "go ahead", "let's go", "ready", "diving in", "dive in", "let's get started"]
+            text_lower = response_text.lower()
+            if any(kw in text_lower for kw in start_keywords):
+                logger.info("🎬 Participant signalled to start the show!")
+                self.state = PodcastState.QUESTIONING
+                await self._ask_next_question()
+                return
+
+            # Otherwise, keep waiting for others or more introductions
+            self.awaiting_response = True
+            return
 
         # Evaluate response
         self.state = PodcastState.EVALUATING
@@ -564,20 +566,22 @@ Return ONLY the wrap-up, no preamble."""
         import re
 
         patterns = [
-            r"(?:I'm|I am|my name is|this is|call me)\s+([A-Z][a-z]+)",
-            r"^([A-Z][a-z]+)\s+(?:here|speaking)",
-            r"([A-Z][a-z]+)\s+from\s+(?:AWS|ShellKode|the team)",
+            r"(?:I'm|I am|my name is|this is|call me|i'm|i am)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)",
+            r"^([A-Z][a-z]+)\s+(?:here|speaking|from)",
+            r"([A-Z][a-z]+)\s+from\s+(?:AWS|ShellKode|the team|Amazon)",
+            r"(?:hi|hello|hey),?\s+(?:this is|I'm|I am)\s+([A-Z][a-z]+)",
         ]
 
-        text_lower = text.lower()
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
-                name = match.group(1)
+                name = match.group(1).strip()
                 # Validate it's likely a name (not a common word)
-                common_words = ['hello', 'thanks', 'great', 'yes', 'sure', 'okay']
-                if name.lower() not in common_words and len(name) > 2:
-                    return name.capitalize()
+                common_words = ['hello', 'thanks', 'great', 'yes', 'sure', 'okay', 'thank', 'good']
+                name_first_word = name.split()[0].lower()
+                if name_first_word not in common_words and len(name) > 2:
+                    # Capitalize properly
+                    return ' '.join(word.capitalize() for word in name.split())
 
         return None
 
@@ -594,6 +598,9 @@ Return ONLY the wrap-up, no preamble."""
 
     def get_state_info(self) -> Dict:
         """Get current orchestrator state"""
+        participants = get_all_participants()
+        turn_counts = {pid: p["turn_count"] for pid, p in participants.items()}
+
         return {
             "state": self.state.value,
             "topic": self.topic,
@@ -602,6 +609,7 @@ Return ONLY the wrap-up, no preamble."""
             "current_speaker_id": self.current_speaker_id,
             "current_question": self.current_question,
             "awaiting_response": self.awaiting_response,
-            "speaker_turn_counts": self.speaker_turn_counts,
+            "active_participants": len(participants),
+            "participant_turn_counts": turn_counts,
             "conversation_length": len(self.conversation_history)
         }
