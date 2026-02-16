@@ -23,6 +23,7 @@ from tts_client import SarvamTTSClient
 from podcast_orchestrator import PodcastOrchestrator, PodcastState
 from speaker_personas import get_persona, get_speaker_name
 from strands.models import BedrockModel
+from tts_preprocessor import preprocess_for_tts, format_question_for_speech
 
 # Optional: Old agent_logic for backward compatibility with /ws/podcast endpoint
 try:
@@ -237,15 +238,18 @@ async def websocket_endpoint(websocket: WebSocket):
                     response_text = agent_response.get("response", "")
                     if response_text:
                         logger.info("🔊 Generating TTS audio for agent response...")
-                        
+
+                        # Preprocess for TTS (handle acronyms, remove markdown, etc.)
+                        processed_text = preprocess_for_tts(response_text)
+
                         # Split response into sentences for better streaming
                         import re
                         # Split on sentence boundaries (., !, ?) followed by space or end
-                        sentences = re.split(r'(?<=[.!?])\s+', response_text.strip())
+                        sentences = re.split(r'(?<=[.!?])\s+', processed_text.strip())
                         sentences = [s.strip() for s in sentences if s.strip()]
-                        
+
                         logger.info(f"🔊 Split response into {len(sentences)} sentences")
-                        
+
                         # Generate and send audio for each sentence
                         for i, sentence in enumerate(sentences, 1):
                             logger.info(f"🔊 Generating audio for sentence {i}/{len(sentences)}: {sentence[:50]}...")
@@ -358,11 +362,13 @@ async def orchestrated_podcast_websocket(websocket: WebSocket):
     async def generate_and_send_tts(text: str, speaker_type: str):
         """Generate and send TTS audio"""
         try:
-            logger.info(f"🔊 Generating TTS for {speaker_type}: {text[:50]}...")
+            # Preprocess text for TTS (handle acronyms, remove markdown, etc.)
+            processed_text = preprocess_for_tts(text)
+            logger.info(f"🔊 Generating TTS for {speaker_type}: {processed_text[:50]}...")
 
             # Split into sentences
             import re
-            sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+            sentences = re.split(r'(?<=[.!?])\s+', processed_text.strip())
             sentences = [s.strip() for s in sentences if s.strip()]
 
             for i, sentence in enumerate(sentences, 1):

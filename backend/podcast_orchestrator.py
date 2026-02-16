@@ -129,6 +129,15 @@ BEHAVIOR:
 - Keep the energy and pace appropriate
 - When a new participant introduces themselves, note their name and expertise
 - Address participants by their actual names
+
+IMPORTANT - TEXT-TO-SPEECH OUTPUT:
+Your output will be converted to speech. Follow these rules:
+- NO markdown formatting (no **, *, __, `, #, etc.)
+- NO hashtags
+- NO special characters or symbols
+- Write naturally as you would speak
+- Use plain, conversational English
+- Questions should naturally address the speaker by name
 """
 
     async def start_podcast(self):
@@ -168,15 +177,19 @@ Instructions:
 2. Invite participants to introduce themselves (name and background).
 3. Keep it to 2-3 sentences max.
 4. Be warm and inviting.
+5. Write as natural speech (this will be spoken aloud via text-to-speech).
+6. NO markdown, hashtags, or special formatting.
 
-Return ONLY the introduction, no preamble."""
+Return ONLY the introduction, no preamble or formatting."""
 
         try:
             intro = str(self.agent(prompt)).strip()
+            # Clean up any quotes that might wrap the response
+            intro = intro.strip('"').strip("'")
             return intro
         except Exception as e:
             logger.error(f"❌ Introduction generation failed: {e}")
-            return f"Welcome to our podcast on {self.topic}. I'm excited to have everyone here today. Please introduce yourselves - your name and a bit about your background!"
+            return f"Welcome to our podcast on {self.topic}. I'm excited to have everyone here today. Please introduce yourselves, your name and a bit about your background!"
 
     async def _ask_next_question(self):
         """Generate and ask the next question"""
@@ -523,14 +536,17 @@ CONVERSATION SUMMARY:
 {recent_context}
 
 Generate a warm closing (2-3 sentences) that:
-1. Thanks the speakers
+1. Thanks the speakers by name
 2. Summarizes key takeaways
 3. Closes the discussion professionally
+4. Write as natural speech (this will be spoken aloud).
+5. NO markdown, hashtags, or special formatting.
 
-Return ONLY the wrap-up, no preamble."""
+Return ONLY the wrap-up, no preamble or formatting."""
 
         try:
             wrap_up = str(self.agent(prompt)).strip()
+            wrap_up = wrap_up.strip('"').strip("'")
             return wrap_up
         except Exception as e:
             logger.error(f"❌ Wrap-up generation failed: {e}")

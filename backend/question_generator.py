@@ -34,7 +34,15 @@ Your role is to create engaging, contextual questions that:
 4. Build on previous discussion points
 5. Are clear, concise, and open-ended
 
-Generate questions that encourage substantive responses while keeping the podcast flowing naturally."""
+Generate questions that encourage substantive responses while keeping the podcast flowing naturally.
+
+IMPORTANT - TEXT-TO-SPEECH OUTPUT:
+Your questions will be spoken aloud via text-to-speech. Follow these rules:
+- NO markdown formatting (no **, *, __, `, #, etc.)
+- NO hashtags or special characters
+- Write naturally as you would speak in a conversation
+- Questions should naturally address the speaker by name
+- Use conversational English"""
 
     async def generate_question(
         self,
@@ -94,16 +102,21 @@ Generate ONE clear, engaging question that:
 2. Relates to the main topic: {topic}
 3. Builds on or explores a new angle from the recent conversation
 4. Is open-ended and encourages a substantive response
-5. Is concise (1-2 sentences maximum){intro_instruction}
+5. Is concise (1-2 sentences maximum)
+6. Naturally addresses {speaker_display} by name at the beginning
+7. Written as natural speech (will be spoken via text-to-speech)
+8. NO markdown, hashtags, or special formatting{intro_instruction}
 
-Return ONLY the question, no preamble or explanation."""
+Example format: "{speaker_display}, as an {speaker_persona['role'].lower()}, how would you..."
+
+Return ONLY the question, no preamble, quotes, or explanation."""
 
         try:
             result = str(self.agent(prompt)).strip()
             # Clean up any extra formatting
             question = result.strip('"').strip("'").strip()
 
-            logger.info(f"✨ Generated question for {speaker_persona['name']}: {question}")
+            logger.info(f"✨ Generated question for {speaker_display}: {question}")
             return question
 
         except Exception as e:
@@ -121,11 +134,12 @@ Return ONLY the question, no preamble or explanation."""
         """
         Generate a follow-up question based on a previous response
         """
+        speaker_name = speaker_persona.get('name', 'Speaker')
         prompt = f"""Generate a follow-up question for the podcast.
 
 MAIN TOPIC: {topic}
 
-SPEAKER: {speaker_persona['name']} ({speaker_persona['role']})
+SPEAKER: {speaker_name} ({speaker_persona['role']})
 
 PREVIOUS QUESTION: {original_question}
 
@@ -136,19 +150,23 @@ Generate ONE concise follow-up question that:
 2. Clarifies or expands on an interesting point they raised
 3. Stays relevant to {topic}
 4. Is appropriate for {speaker_persona['role']}
+5. Addresses {speaker_name} by name naturally
+6. Written as natural speech (will be spoken via text-to-speech)
+7. NO markdown, hashtags, or special formatting
 
-Return ONLY the question, no preamble."""
+Return ONLY the question, no preamble or quotes."""
 
         try:
             result = str(self.agent(prompt)).strip()
             question = result.strip('"').strip("'").strip()
 
-            logger.info(f"✨ Generated follow-up for {speaker_persona['name']}: {question}")
+            logger.info(f"✨ Generated follow-up for {speaker_name}: {question}")
             return question
 
         except Exception as e:
             logger.error(f"❌ Follow-up generation failed: {e}", exc_info=True)
-            return f"Could you elaborate more on that aspect of {topic}?"
+            speaker_name = speaker_persona.get('name', 'Speaker')
+            return f"{speaker_name}, could you elaborate more on that aspect of {topic}?"
 
     async def generate_redirect_question(
         self,
@@ -160,11 +178,12 @@ Return ONLY the question, no preamble."""
         """
         Generate a redirect question to bring conversation back on track
         """
+        speaker_name = speaker_persona.get('name', 'Speaker')
         prompt = f"""The speaker went off-track. Generate a polite redirect question.
 
 MAIN TOPIC: {topic}
 
-SPEAKER: {speaker_persona['name']} ({speaker_persona['role']})
+SPEAKER: {speaker_name} ({speaker_persona['role']})
 
 ORIGINAL QUESTION: {original_question}
 
@@ -175,19 +194,22 @@ Generate a redirect question that:
 2. Refocuses on the original question or {topic}
 3. Is diplomatic and maintains good conversation flow
 4. Gives them a chance to address the core topic
+5. Addresses {speaker_name} by name naturally
+6. Written as natural speech (will be spoken via text-to-speech)
+7. NO markdown, hashtags, or special formatting
 
-Return ONLY the redirect question, no preamble."""
+Return ONLY the redirect question, no preamble or quotes."""
 
         try:
             result = str(self.agent(prompt)).strip()
             question = result.strip('"').strip("'").strip()
 
-            logger.info(f"✨ Generated redirect for {speaker_persona['name']}: {question}")
+            logger.info(f"✨ Generated redirect for {speaker_name}: {question}")
             return question
 
         except Exception as e:
             logger.error(f"❌ Redirect generation failed: {e}", exc_info=True)
-            return f"Let me refocus the question: {original_question}"
+            return f"{speaker_name}, let me refocus the question. {original_question}"
 
     def _format_conversation_history(self, history: List[Dict], last_n: int = 5) -> str:
         """Format recent conversation history for context"""
